@@ -6,21 +6,36 @@
 */
 require('./settings')
 
-// --- AUTO-FIX COMPATIBILITY & MISSING MODULES (PENTING) ---
+// --- AUTO-FIX COMPATIBILITY (CRITICAL FIX) ---
 const Module = require('module');
 const originalRequire = Module.prototype.require;
 
 Module.prototype.require = function(request) {
-    // 1. Redirect Library Lama (Baileys)
+    // 1. Redirect Library Lama (@adiwajshing/baileys) ke Baru
     if (request === '@adiwajshing/baileys') {
-        return originalRequire.apply(this, ['@whiskeysockets/baileys']);
+        const newBaileys = originalRequire.apply(this, ['@whiskeysockets/baileys']);
+        
+        // KITA PAKSA AGAR STRUKTURNYA COCOK DENGAN FILE LAMA
+        // Menggabungkan export default dan named export menjadi satu objek
+        const patchedBaileys = {
+            ...newBaileys,
+            ...(newBaileys.default || {}),
+            default: newBaileys
+        };
+
+        // Pastikan makeInMemoryStore benar-benar ada
+        if (!patchedBaileys.makeInMemoryStore) {
+            // Fallback: Jika tidak ditemukan, kita ambil langsung dari library baru
+            patchedBaileys.makeInMemoryStore = newBaileys.makeInMemoryStore;
+        }
+
+        return patchedBaileys;
     }
 
-    // 2. Coba Load Module
+    // 2. Tangani Module Lain yang Mungkin Hilang
     try {
         return originalRequire.apply(this, arguments);
     } catch (e) {
-        // 3. Tangani Module Kosong (Agar tidak Crash)
         if (e.code === 'MODULE_NOT_FOUND') {
             // Mock lolcatjs (Visual Terminal) jika hilang
             if (request === 'lolcatjs') {
@@ -107,8 +122,21 @@ const _ = require('lodash')
 const Jimp = require('jimp')
 
 // --- Import Library Internal ---
+// Import ini sekarang aman karena patch di atas
 const { smsg } = require('./lib/myfunc')
-const { welcome, antiDelete } = require('./lib/welcome')
+
+// Kita bungkus require welcome.js dalam try-catch agar tidak mematikan server jika masih error
+let welcome, antiDelete;
+try {
+    const welcomeLib = require('./lib/welcome');
+    welcome = welcomeLib.welcome;
+    antiDelete = welcomeLib.antiDelete;
+} catch (e) {
+    console.error("Gagal memuat lib/welcome.js, fitur welcome mungkin tidak aktif:", e.message);
+    welcome = () => {}; // Dummy function agar bot tidak crash
+    antiDelete = () => {};
+}
+
 const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, writeExif } = require('./lib/exif')
 const { toAudio, toPTT, toVideo } = require('./lib/converter')
 
@@ -300,7 +328,9 @@ async function startalpha() {
                     resolve(ab)
                 })
             }
-            welcome(alpha, anu, global.ownername, reSize, isWelcome, isLeft, isPromote, isDemote, isSetWelcome, isSetLeft, getTextSetLeft, getTextSetWelcome, set_welcome_db, set_left_db, set_promote, set_demote)
+            if (welcome) {
+                 welcome(alpha, anu, global.ownername, reSize, isWelcome, isLeft, isPromote, isDemote, isSetWelcome, isSetLeft, getTextSetLeft, getTextSetWelcome, set_welcome_db, set_left_db, set_promote, set_demote)
+            }
         } catch (e) {
             console.log("Error in Group Participants Update:", e)
         }
@@ -308,13 +338,15 @@ async function startalpha() {
 
     // 8. Handle Delete & ViewOnce
     alpha.ev.on("message.delete", async (anu) => {
-        if(global.antidelete) antiDelete(global.antidelete, alpha, anu)
+        if(global.antidelete && antiDelete) antiDelete(global.antidelete, alpha, anu)
     })
 
     alpha.ev.on("viewOnceMessageV2", async (anu) => {
         if(global.antiviewonce) {
-            const { oneTime } = require("./lib/welcome");
-            oneTime(global.antiviewonce, alpha, anu)
+            try {
+                const { oneTime } = require("./lib/welcome");
+                oneTime(global.antiviewonce, alpha, anu)
+            } catch (e) {}
         }
     })
     
