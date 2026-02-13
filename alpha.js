@@ -8,6 +8,9 @@ require('./settings')
 
 // --- Kebutuhan Heroku agar tidak Crash (R10 Error) ---
 const http = require("http");
+const express = require('express');
+const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 3000; 
 
 // --- Import Library Baileys Terbaru ---
@@ -48,11 +51,9 @@ const { toAudio, toPTT, toVideo } = require('./lib/converter')
 const { welcome, antiDelete } = require('./lib/welcome')
 
 // --- Database Lokal Helper ---
-// Fungsi aman untuk membaca database JSON agar tidak error jika file kosong/hilang
 const checkFile = (filepath, defaultData) => {
     try {
         if (!fs.existsSync(filepath)) {
-            // Buat folder jika belum ada
             const dir = path.dirname(filepath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             fs.writeFileSync(filepath, JSON.stringify(defaultData, null, 2));
@@ -78,15 +79,10 @@ global.api = (name, path = '/', query = {}, apikeyqueryname) => (name in global.
 // --- Store (Memori Chat) ---
 const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
 
-// --- Server Express Sederhana untuk Heroku ---
-const express = require('express')
-const app = express()
-const server = http.createServer(app)
-
 // --- Fungsi Utama Bot ---
 async function startalpha() {
+    
     // 1. Setup Auth & Browser
-    // Menggunakan folder 'session' untuk menyimpan kredensial (MultiFileAuthState)
     const { state, saveCreds } = await useMultiFileAuthState('session')
     const { version, isLatest } = await fetchLatestBaileysVersion()
     
@@ -99,11 +95,21 @@ async function startalpha() {
     
     console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`)
 
+    // --- SETUP SERVER HEROKU (PENTING AGAR TIDAK H14/R10) ---
+    // Server harus listen SEBELUM connect ke WA
+    app.get('/', (req, res) => {
+        res.send('<h1>Alphabot-Md is Running!</h1><p>Bot status: Online</p>');
+    });
+
+    server.listen(PORT, () => {
+        console.log(chalk.green(`Server listening on PORT ${PORT}`));
+    });
+
     // 2. Inisialisasi Koneksi
     const alpha = alphaConnect({
         logger: pino({ level: 'silent' }),
         printQRInTerminal: true,
-        browser: ["Alphabot-Md", "Safari", "3.0.0"], // Browser Signature
+        browser: ["Alphabot-Md", "Safari", "3.0.0"], 
         auth: state,
         getMessage: async (key) => {
             if (store) {
@@ -112,7 +118,6 @@ async function startalpha() {
             }
             return { conversation: 'Hello World' }
         },
-        // Patch agar pesan template/button tidak menyebabkan error (walaupun tidak muncul di WA)
         patchMessageBeforeSending: (message) => {
             const requiresPatch = !!(
                 message.buttonsMessage ||
@@ -145,10 +150,7 @@ async function startalpha() {
         }
     }
     
-    // Bind event emitter store
     store.bind(alpha.ev)
-    
-    // Auto save store setiap 10 detik
     setInterval(() => {
         store.writeToFile('./session/baileys_store.json')
     }, 10000)
@@ -157,17 +159,12 @@ async function startalpha() {
     alpha.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
         
-        // Setup Web Server untuk menampilkan QR di Log Heroku/Web
+        // Update QR ke Web Server jika ada
         if (qr) {
             app.use(async (req, res) => {
                 res.setHeader('content-type', 'image/png')
                 res.end(await require('qrcode').toBuffer(qr))
             })
-            if (!server.listening) {
-                server.listen(PORT, () => {
-                    console.log(`Server & QR running on PORT ${PORT}`)
-                })
-            }
         }
 
         if (connection === 'close') {
@@ -183,7 +180,7 @@ async function startalpha() {
                 startalpha();
             } else if (reason === DisconnectReason.connectionReplaced) {
                 console.log(chalk.red("Connection Replaced, Another New Session Opened, reconnecting..."));
-                startalpha(); // Tetap coba reconnect
+                // Jangan langsung startalpha() di sini jika session corrupt
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.red(`Device Logged Out, Please Scan Again And Run.`));
                 alpha.logout();
@@ -221,10 +218,8 @@ async function startalpha() {
                 
                 if (mek.key.id.startsWith('BAE5') && mek.key.id.length === 16) return
                 
-                // Serialize Message (Membuat shortcut msg.body, msg.from, dll)
                 const m = smsg(alpha, mek, store)
                 
-                // Resize function untuk kebutuhan index.js
                 const reSize = async (buffer, ukur1, ukur2) => {
                     return new Promise(async (resolve, reject) => {
                         var baper = await Jimp.read(buffer);
@@ -233,7 +228,6 @@ async function startalpha() {
                     })
                 }
 
-                // Panggil Handler (index.js)
                 require("./index")(alpha, m, mek, chatUpdate, store, reSize, _welcome, _left, antionce, antidelete, _promote, _demote)
             }
         } catch (err) {
@@ -241,7 +235,7 @@ async function startalpha() {
         }
     })
 
-    // 7. Handle Group Participants (Welcome/Left)
+    // 7. Handle Group Participants
     alpha.ev.on('group-participants.update', async (anu) => {
         const isWelcome = _welcome.includes(anu.id)
         const isLeft = _left.includes(anu.id)
@@ -299,8 +293,7 @@ async function startalpha() {
         }
     })
 
-    // --- Helper Functions (Custom Methods) ---
-    // Diperbarui agar kompatibel dengan Baileys terbaru
+    // --- Helper Functions ---
 
     alpha.decodeJid = (jid) => {
         if (!jid) return jid
@@ -370,35 +363,29 @@ async function startalpha() {
         }
     }
 
-    // --- Helper: Send Text ---
     alpha.sendText = (jid, text, quoted = '', options) => alpha.sendMessage(jid, { text: text, ...options }, { quoted })
 
-    // --- Helper: Send Image ---
     alpha.sendImage = async (jid, path, caption = '', quoted = '', options) => {
         let buffer = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split`,`[1], 'base64') : /^https?:\/\//.test(path) ? await (await fetch(path)).buffer() : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
         return await alpha.sendMessage(jid, { image: buffer, caption: caption, ...options }, { quoted })
     }
 
-    // --- Helper: Send Video ---
     alpha.sendVideo = async (jid, path, gif = false, caption = '', quoted = '', options) => {
         let buffer = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split`,`[1], 'base64') : /^https?:\/\//.test(path) ? await (await fetch(path)).buffer() : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
         return await alpha.sendMessage(jid, { video: buffer, caption: caption, gifPlayback: gif, ...options }, { quoted })
     }
 
-    // --- Helper: Send Audio ---
     alpha.sendAudio = async (jid, path, quoted = '', ptt = false, options) => {
         let buffer = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split`,`[1], 'base64') : /^https?:\/\//.test(path) ? await (await fetch(path)).buffer() : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
         return await alpha.sendMessage(jid, { audio: buffer, ptt: ptt, ...options }, { quoted })
     }
 
-    // --- Helper: Send Mentions ---
     alpha.sendTextWithMentions = async (jid, text, quoted, options = {}) => alpha.sendMessage(jid, {
         text: text,
         mentions: [...text.matchAll(/@(\d{0,16})/g)].map(v => v[1] + '@s.whatsapp.net'),
         ...options
     }, { quoted })
 
-    // --- Helper: Send Sticker ---
     alpha.sendImageAsSticker = async (jid, path, quoted, options = {}) => {
         let buff = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split`,`[1], 'base64') : /^https?:\/\//.test(path) ? await (await fetch(path)).buffer() : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
         let buffer
@@ -423,7 +410,6 @@ async function startalpha() {
         return buffer
     }
 
-    // --- Helper: Download Media ---
     alpha.downloadMediaMessage = async (message) => {
         let mime = (message.msg || message).mimetype || ''
         let messageType = message.mtype ? message.mtype.replace(/Message/gi, '') : mime.split('/')[0]
@@ -435,7 +421,6 @@ async function startalpha() {
         return buffer
     }
 
-    // --- Helper: Send Contact ---
     alpha.sendContact = async (jid, kon, quoted = '', opts = {}) => {
         let list = []
         for (let i of kon) {
@@ -446,9 +431,6 @@ async function startalpha() {
         }
         alpha.sendMessage(jid, { contacts: { displayName: `${list.length} Kontak`, contacts: list }, ...opts }, { quoted })
     }
-
-    // --- Helper: Button Compatibility (Anti Crash) ---
-    // WhatsApp menghapus fitur List dan Button, fungsi ini mengubahnya menjadi teks biasa agar bot tidak error.
     
     alpha.sendButtonText = (jid, buttons = [], text, footer, quoted = '', options = {}) => {
         let buttonText = buttons.map(b => {
@@ -474,10 +456,8 @@ async function startalpha() {
     return alpha
 }
 
-// Jalankan Fungsi Utama
 startalpha()
 
-// Watch File untuk Reload Otomatis (Dev Mode)
 let file = require.resolve(__filename)
 fs.watchFile(file, () => {
     fs.unwatchFile(file)
