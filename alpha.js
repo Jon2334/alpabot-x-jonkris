@@ -6,17 +6,39 @@
 */
 require('./settings')
 
-// --- AUTO-FIX COMPATIBILITY (PENTING) ---
-// Kode ini membelokkan panggilan library lama ke library baru
-// Ini mengatasi error: Cannot find module '@adiwajshing/baileys' di file lib/myfunc.js
+// --- AUTO-FIX COMPATIBILITY & MISSING MODULES (PENTING) ---
 const Module = require('module');
 const originalRequire = Module.prototype.require;
+
 Module.prototype.require = function(request) {
-    // Jika ada file yang minta library lama, kasih library baru
+    // 1. Redirect Library Lama (Baileys)
     if (request === '@adiwajshing/baileys') {
         return originalRequire.apply(this, ['@whiskeysockets/baileys']);
     }
-    return originalRequire.apply(this, arguments);
+
+    // 2. Coba Load Module
+    try {
+        return originalRequire.apply(this, arguments);
+    } catch (e) {
+        // 3. Tangani Module Kosong (Agar tidak Crash)
+        if (e.code === 'MODULE_NOT_FOUND') {
+            // Mock lolcatjs (Visual Terminal) jika hilang
+            if (request === 'lolcatjs') {
+                return { 
+                    fromString: (text) => console.log(text), 
+                    options: {} 
+                };
+            }
+            // Mock cfonts jika hilang
+            if (request === 'cfonts') {
+                return { 
+                    say: (text) => console.log(text), 
+                    render: (text) => console.log(text) 
+                };
+            }
+        }
+        throw e;
+    }
 };
 
 // --- Kebutuhan Heroku agar tidak Crash (R10 Error) ---
@@ -27,8 +49,7 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 3000; 
 
 // --- START SERVER SEGERA (PENTING) ---
-// Server dinyalakan di awal agar Heroku mendeteksi proses berjalan
-let globalQR = null; // Variabel penampung QR
+let globalQR = null; 
 
 app.get('/', (req, res) => {
     res.send(`
@@ -70,10 +91,6 @@ const {
     makeInMemoryStore,
     jidDecode,
     proto,
-    getContentType,
-    downloadContentFromMessage,
-    generateWAMessageFromContent,
-    prepareWAMessageMedia,
     jidNormalizedUser,
     delay
 } = require("@whiskeysockets/baileys")
@@ -86,18 +103,14 @@ const chalk = require('chalk')
 const figlet = require("figlet")
 const FileType = require('file-type')
 const fetch = require('node-fetch')
-const PhoneNumber = require('awesome-phonenumber')
-const yargs = require('yargs/yargs')
 const _ = require('lodash')
 const Jimp = require('jimp')
 
 // --- Import Library Internal ---
-// Sekarang aman karena sudah ada patch di atas
-const { color } = require("./lib/color");
-const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, writeExif } = require('./lib/exif')
-const { smsg, isUrl, generateMessageTag, getBuffer, getSizeMedia, fetchJson, sleep } = require('./lib/myfunc')
-const { toAudio, toPTT, toVideo } = require('./lib/converter')
+const { smsg } = require('./lib/myfunc')
 const { welcome, antiDelete } = require('./lib/welcome')
+const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, writeExif } = require('./lib/exif')
+const { toAudio, toPTT, toVideo } = require('./lib/converter')
 
 // --- Database Lokal Helper ---
 const checkFile = (filepath, defaultData) => {
@@ -198,13 +211,8 @@ async function startalpha() {
     alpha.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
         
-        // Simpan QR ke variabel global agar bisa diakses di Web Server
-        if (qr) {
-            globalQR = qr;
-        } else {
-            // Reset jika sudah connect atau tidak ada QR
-            if (connection === 'open') globalQR = null;
-        }
+        if (qr) globalQR = qr;
+        if (connection === 'open') globalQR = null;
 
         if (connection === 'close') {
             let reason = new Boom(lastDisconnect?.error)?.output.statusCode
@@ -219,7 +227,6 @@ async function startalpha() {
                 startalpha();
             } else if (reason === DisconnectReason.connectionReplaced) {
                 console.log(chalk.red("Connection Replaced, Another New Session Opened, reconnecting..."));
-                // Jangan langsung startalpha() di sini jika session corrupt
             } else if (reason === DisconnectReason.loggedOut) {
                 console.log(chalk.red(`Device Logged Out, Please Scan Again And Run.`));
                 alpha.logout();
@@ -252,13 +259,10 @@ async function startalpha() {
                 mek.message = (Object.keys(mek.message)[0] === 'ephemeralMessage') ? mek.message.ephemeralMessage.message : mek.message
                 if (mek.key && mek.key.remoteJid === 'status@broadcast') return
                 
-                // Cek Mode Public/Self
                 if (!alpha.public && !mek.key.fromMe && chatUpdate.type === 'notify') return
-                
                 if (mek.key.id.startsWith('BAE5') && mek.key.id.length === 16) return
                 
                 const m = smsg(alpha, mek, store)
-                
                 const reSize = async (buffer, ukur1, ukur2) => {
                     return new Promise(async (resolve, reject) => {
                         var baper = await Jimp.read(buffer);
@@ -289,7 +293,6 @@ async function startalpha() {
         try {
             const { isSetWelcome, getTextSetWelcome } = require('./lib/setwelcome')
             const { isSetLeft, getTextSetLeft } = require('./lib/setleft')
-            
             const reSize = async (buffer, ukur1, ukur2) => {
                 return new Promise(async (resolve, reject) => {
                     var baper = await Jimp.read(buffer);
@@ -297,7 +300,6 @@ async function startalpha() {
                     resolve(ab)
                 })
             }
-
             welcome(alpha, anu, global.ownername, reSize, isWelcome, isLeft, isPromote, isDemote, isSetWelcome, isSetLeft, getTextSetLeft, getTextSetWelcome, set_welcome_db, set_left_db, set_promote, set_demote)
         } catch (e) {
             console.log("Error in Group Participants Update:", e)
@@ -333,7 +335,6 @@ async function startalpha() {
     })
 
     // --- Helper Functions ---
-
     alpha.decodeJid = (jid) => {
         if (!jid) return jid
         if (/:\d+@/gi.test(jid)) {
@@ -351,7 +352,7 @@ async function startalpha() {
 
     alpha.public = true
 
-    // --- Helper: Get File ---
+    // Helper: Get File
     alpha.getFile = async (PATH, returnAsFilename) => {
         let res, filename
         let data = Buffer.isBuffer(PATH) ? PATH : /^data:.*?\/.*?;base64,/i.test(PATH) ? Buffer.from(PATH.split`,`[1], 'base64') : /^https?:\/\//.test(PATH) ? await (res = await fetch(PATH)).buffer() : fs.existsSync(PATH) ? (filename = PATH, fs.readFileSync(PATH)) : typeof PATH === 'string' ? PATH : Buffer.alloc(0)
@@ -361,7 +362,7 @@ async function startalpha() {
         return { res, filename, ...type, data, deleteFile() { return filename && fs.promises.unlink(filename) } }
     }
 
-    // --- Helper: Send File (Universal) ---
+    // Helper: Send File
     alpha.sendFile = async (jid, path, filename = '', caption = '', quoted, ptt = false, options = {}) => {
         let type = await alpha.getFile(path, true)
         let { res, data: file, filename: pathFile } = type
@@ -383,13 +384,11 @@ async function startalpha() {
             mimetype = 'audio/ogg; codecs=opus'
         } else mtype = 'document'
         if (options.asDocument) mtype = 'document'
-
         delete options.asSticker
         delete options.asLocation
         delete options.asVideo
         delete options.asDocument
         delete options.asImage
-
         let message = { ...options, caption, ptt, [mtype]: { url: pathFile }, mimetype }
         let m
         try {
@@ -403,7 +402,7 @@ async function startalpha() {
     }
 
     alpha.sendText = (jid, text, quoted = '', options) => alpha.sendMessage(jid, { text: text, ...options }, { quoted })
-
+    
     alpha.sendImage = async (jid, path, caption = '', quoted = '', options) => {
         let buffer = Buffer.isBuffer(path) ? path : /^data:.*?\/.*?;base64,/i.test(path) ? Buffer.from(path.split`,`[1], 'base64') : /^https?:\/\//.test(path) ? await (await fetch(path)).buffer() : fs.existsSync(path) ? fs.readFileSync(path) : Buffer.alloc(0)
         return await alpha.sendMessage(jid, { image: buffer, caption: caption, ...options }, { quoted })
@@ -471,13 +470,18 @@ async function startalpha() {
         alpha.sendMessage(jid, { contacts: { displayName: `${list.length} Kontak`, contacts: list }, ...opts }, { quoted })
     }
     
-    alpha.sendButtonText = (jid, buttons = [], text, footer, quoted = '', options = {}) => {
+    // Fungsi untuk mengubah Button menjadi Text (Anti Crash)
+    const buttonToText = (text, footer, buttons) => {
         let buttonText = buttons.map(b => {
             return b.urlButton ? `🔗 ${b.urlButton.displayText}: ${b.urlButton.url}` :
                    b.callButton ? `📞 ${b.callButton.displayText}: ${b.callButton.phoneNumber}` :
                    `👉 ${b.quickReplyButton?.displayText || b.buttonText?.displayText || 'Button'}`
         }).join('\n');
-        alpha.sendMessage(jid, { text: `${text}\n\n${footer}\n\n${buttonText}`, ...options }, { quoted })
+        return `${text}\n\n${footer}\n\n${buttonText}`;
+    }
+
+    alpha.sendButtonText = (jid, buttons = [], text, footer, quoted = '', options = {}) => {
+        alpha.sendMessage(jid, { text: buttonToText(text, footer, buttons), ...options }, { quoted })
     }
 
     alpha.send1ButMes = (jid, text = '', footer = '', butId = '', dispText = '', quoted, ments) => {

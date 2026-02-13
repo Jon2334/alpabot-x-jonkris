@@ -1,6 +1,6 @@
 {
   "name": "Alphabot-Md",
-  "version": "18.0.0",
+  "version": "18.1.0",
   "description": "Alphabot Md - Heroku Optimized",
   "main": "zeeone.js",
   "license": "MIT",
@@ -42,6 +42,7 @@
     "jimp": "^0.22.10",
     "jsdom": "^22.1.0",
     "lodash": "^4.17.21",
+    "lolcatjs": "^2.4.1",
     "lowdb": "^2.1.0",
     "md5": "^2.3.0",
     "mongoose": "^8.0.0",
@@ -52,6 +53,7 @@
     "node-webpmux": "^3.1.7",
     "openai": "^4.20.1",
     "pino": "^8.16.2",
+    "qrcode": "^1.5.3",
     "qrcode-terminal": "^0.12.0",
     "scrape-primbon": "^1.1.0",
     "similarity": "^1.2.1",
