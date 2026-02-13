@@ -6,6 +6,19 @@
 */
 require('./settings')
 
+// --- AUTO-FIX COMPATIBILITY (PENTING) ---
+// Kode ini membelokkan panggilan library lama ke library baru
+// Ini mengatasi error: Cannot find module '@adiwajshing/baileys' di file lib/myfunc.js
+const Module = require('module');
+const originalRequire = Module.prototype.require;
+Module.prototype.require = function(request) {
+    // Jika ada file yang minta library lama, kasih library baru
+    if (request === '@adiwajshing/baileys') {
+        return originalRequire.apply(this, ['@whiskeysockets/baileys']);
+    }
+    return originalRequire.apply(this, arguments);
+};
+
 // --- Kebutuhan Heroku agar tidak Crash (R10 Error) ---
 const http = require("http");
 const express = require('express');
@@ -79,6 +92,7 @@ const _ = require('lodash')
 const Jimp = require('jimp')
 
 // --- Import Library Internal ---
+// Sekarang aman karena sudah ada patch di atas
 const { color } = require("./lib/color");
 const { imageToWebp, videoToWebp, writeExifImg, writeExifVid, writeExif } = require('./lib/exif')
 const { smsg, isUrl, generateMessageTag, getBuffer, getSizeMedia, fetchJson, sleep } = require('./lib/myfunc')
