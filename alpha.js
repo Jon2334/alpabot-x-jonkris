@@ -13,6 +13,41 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000; 
 
+// --- START SERVER SEGERA (PENTING) ---
+// Server dinyalakan di awal agar Heroku mendeteksi proses berjalan
+let globalQR = null; // Variabel penampung QR
+
+app.get('/', (req, res) => {
+    res.send(`
+        <html>
+            <head>
+                <title>Alphabot-Md Status</title>
+                <meta http-equiv="refresh" content="10">
+            </head>
+            <body style="font-family: Arial; text-align: center; padding-top: 50px;">
+                <h1>Alphabot-Md is Running!</h1>
+                <p>Status: <strong>Online</strong></p>
+                <p>Jika belum scan, QR code akan muncul dibawah:</p>
+                <img src="/qr" alt="QR Code" />
+            </body>
+        </html>
+    `);
+});
+
+app.get('/qr', async (req, res) => {
+    if (globalQR) {
+        res.setHeader('content-type', 'image/png');
+        const qrBuffer = await require('qrcode').toBuffer(globalQR);
+        res.end(qrBuffer);
+    } else {
+        res.status(404).send('QR belum tersedia atau sudah terkoneksi.');
+    }
+});
+
+server.listen(PORT, () => {
+    console.log(`Server listening on PORT ${PORT}`);
+});
+
 // --- Import Library Baileys Terbaru ---
 const {
     default: alphaConnect,
@@ -95,16 +130,6 @@ async function startalpha() {
     
     console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`)
 
-    // --- SETUP SERVER HEROKU (PENTING AGAR TIDAK H14/R10) ---
-    // Server harus listen SEBELUM connect ke WA
-    app.get('/', (req, res) => {
-        res.send('<h1>Alphabot-Md is Running!</h1><p>Bot status: Online</p>');
-    });
-
-    server.listen(PORT, () => {
-        console.log(chalk.green(`Server listening on PORT ${PORT}`));
-    });
-
     // 2. Inisialisasi Koneksi
     const alpha = alphaConnect({
         logger: pino({ level: 'silent' }),
@@ -159,12 +184,12 @@ async function startalpha() {
     alpha.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
         
-        // Update QR ke Web Server jika ada
+        // Simpan QR ke variabel global agar bisa diakses di Web Server
         if (qr) {
-            app.use(async (req, res) => {
-                res.setHeader('content-type', 'image/png')
-                res.end(await require('qrcode').toBuffer(qr))
-            })
+            globalQR = qr;
+        } else {
+            // Reset jika sudah connect atau tidak ada QR
+            if (connection === 'open') globalQR = null;
         }
 
         if (connection === 'close') {
