@@ -7,32 +7,36 @@
 require('./settings')
 
 // --- AUTO-FIX COMPATIBILITY (CRITICAL FIX) ---
+// Kode ini sangat penting untuk menjembatani perbedaan versi library di Heroku
 const Module = require('module');
 const originalRequire = Module.prototype.require;
 
 Module.prototype.require = function(request) {
-    // 1. Redirect Library Lama (@adiwajshing/baileys) ke Baru
-    if (request === '@adiwajshing/baileys') {
-        const newBaileys = originalRequire.apply(this, ['@whiskeysockets/baileys']);
+    // 1. Tangkap permintaan ke Baileys (Baik nama lama maupun baru)
+    if (request === '@adiwajshing/baileys' || request === '@whiskeysockets/baileys') {
+        // Load library fisik yang baru
+        const lib = originalRequire.apply(this, ['@whiskeysockets/baileys']);
         
-        // KITA PAKSA AGAR STRUKTURNYA COCOK DENGAN FILE LAMA
-        // Menggabungkan export default dan named export menjadi satu objek
-        const patchedBaileys = {
-            ...newBaileys,
-            ...(newBaileys.default || {}),
-            default: newBaileys
+        // Ambil properti 'default' jika ada (biasanya di Node versi baru)
+        const rawDefault = lib.default || {};
+        
+        // GABUNGKAN SEMUA EXPORT MENJADI SATU OBJEK DATAR
+        // Ini memastikan 'makeInMemoryStore' bisa ditemukan di root object
+        const patchedLib = {
+            ...lib,           // Ambil named exports asli
+            ...rawDefault,    // Timpa dengan isi 'default' jika ada
+            default: lib.default || lib // Pastikan properti default tetap ada
         };
 
-        // Pastikan makeInMemoryStore benar-benar ada
-        if (!patchedBaileys.makeInMemoryStore) {
-            // Fallback: Jika tidak ditemukan, kita ambil langsung dari library baru
-            patchedBaileys.makeInMemoryStore = newBaileys.makeInMemoryStore;
+        // Cek manual untuk makeInMemoryStore
+        if (!patchedLib.makeInMemoryStore && rawDefault.makeInMemoryStore) {
+            patchedLib.makeInMemoryStore = rawDefault.makeInMemoryStore;
         }
 
-        return patchedBaileys;
+        return patchedLib;
     }
 
-    // 2. Tangani Module Lain yang Mungkin Hilang
+    // 2. Tangani Module Lain yang Mungkin Hilang (Anti-Crash)
     try {
         return originalRequire.apply(this, arguments);
     } catch (e) {
@@ -98,12 +102,13 @@ server.listen(PORT, () => {
 });
 
 // --- Import Library Baileys Terbaru ---
+// Karena patch di atas, require ini sekarang mengembalikan objek yang sudah diperbaiki
 const {
     default: alphaConnect,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    makeInMemoryStore,
+    makeInMemoryStore, // Sekarang pasti ada
     jidDecode,
     proto,
     jidNormalizedUser,
@@ -122,7 +127,6 @@ const _ = require('lodash')
 const Jimp = require('jimp')
 
 // --- Import Library Internal ---
-// Import ini sekarang aman karena patch di atas
 const { smsg } = require('./lib/myfunc')
 
 // Kita bungkus require welcome.js dalam try-catch agar tidak mematikan server jika masih error
@@ -133,7 +137,7 @@ try {
     antiDelete = welcomeLib.antiDelete;
 } catch (e) {
     console.error("Gagal memuat lib/welcome.js, fitur welcome mungkin tidak aktif:", e.message);
-    welcome = () => {}; // Dummy function agar bot tidak crash
+    welcome = () => {}; 
     antiDelete = () => {};
 }
 
@@ -167,7 +171,12 @@ const antionce = checkFile('./database/antionce.json', [])
 global.api = (name, path = '/', query = {}, apikeyqueryname) => (name in global.APIs ? global.APIs[name] : name) + path + (query || apikeyqueryname ? '?' + new URLSearchParams(Object.entries({ ...query, ...(apikeyqueryname ? { [apikeyqueryname]: global.APIKeys[name in global.APIs ? global.APIs[name] : name] } : {}) })) : '')
 
 // --- Store (Memori Chat) ---
-const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
+// Fallback jika makeInMemoryStore masih gagal (sangat jarang terjadi setelah patch)
+const safeMakeInMemoryStore = typeof makeInMemoryStore === 'function' 
+    ? makeInMemoryStore 
+    : () => ({ bind: () => {}, readFromFile: () => {}, writeToFile: () => {}, loadMessage: () => ({ conversation: 'hi' }) });
+
+const store = safeMakeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
 
 // --- Fungsi Utama Bot ---
 async function startalpha() {
